@@ -1,0 +1,68 @@
+services:
+  credit_card:
+    channel_id: "@Fin_CC_Offers"
+    language_mode: multi
+    display_name: {en: Credit Cards, hi: क्रेडिट कार्ड, gu: ક્રેડિટ કાર્ડ}
+    icon: 💳
+    disclaimer_profile: financial_referral
+    rate_limit_per_hour: 10
+  loan_personal:
+    channel_id: "@Fin_Personal_Loans"
+    language_mode: multi
+    display_name: {en: Personal Loans, hi: व्यक्तिगत ऋण, gu: વ્યક્તિગત લોન}
+    icon: 💰
+  loan_business:
+    channel_id: "@Fin_Business_Loans"
+    language_mode: single
+    display_name: {en: Business Loans, hi: व्यवसाय ऋण, gu: બિઝનેસ લોન}
+    icon: 🏢
+  loan_home:
+    channel_id: "@Fin_Home_Loans"
+    language_mode: multi
+    display_name: {en: Home Loans, hi: गृह ऋण, gu: હોમ લોન}
+    icon: 🏠
+  bank_account_savings:
+    channel_id: "@Fin_Savings_Accounts"
+    language_mode: multi
+    display_name: {en: Savings Accounts, hi: बचत खाते, gu: બચત ખાતા}
+    icon: 🏦
+  bank_account_current:
+    channel_id: "@Fin_Current_Accounts"
+    language_mode: single
+    display_name: {en: Current Accounts, hi: चालू खाते, gu: ચાલુ ખાતા}
+    icon: 🏦
+  credit_builder:
+    channel_id: "@Fin_Credit_Builder"
+    language_mode: multi
+    display_name: {en: Credit Builder, hi: क्रेडिट निर्माता, gu: ક્રેડિટ બિલ્ડર}
+    icon: 📈
+  insurance_health:
+    channel_id: "@Fin_Health_Insurance"
+    language_mode: multi
+    display_name: {en: Health Insurance, hi: स्वास्थ्य बीमा, gu: આરોગ્ય વીમો}
+    icon: 🏥
+  insurance_vehicle:
+    channel_id: "@Fin_Vehicle_Insurance"
+    language_mode: multi
+    display_name: {en: Vehicle Insurance, hi: वाहन बीमा, gu: વાહન વીમો}
+    icon: 🚗
+  insurance_pa:
+    channel_id: "@Fin_PA_Insurance"
+    language_mode: single
+    display_name: {en: Personal Accident Insurance, hi: व्यक्तिगत दुर्घटना बीमा, gu: વ્યક્તિગત અકસ્માત વીમો}
+    icon: 🛡️
+  demat_account:
+    channel_id: "@Fin_Demat"
+    language_mode: multi
+    display_name: {en: Demat Accounts, hi: डीमैट खाते, gu: ડિમેટ ખાતા}
+    icon: 📊
+  investment_mutual_fund:
+    channel_id: "@Fin_Mutual_Funds"
+    language_mode: multi
+    display_name: {en: Mutual Funds, hi: म्यूचुअल फंड, gu: મ્યુચ્યુઅલ ફંડ}
+    icon: 💹
+  investment_fixed_income:
+    channel_id: "@Fin_Fixed_Income"
+    language_mode: single
+    display_name: {en: Fixed Income, hi: निश्चित आय, gu: નિશ્ચિત આવક}
+    icon: 📈

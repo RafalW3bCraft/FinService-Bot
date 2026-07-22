@@ -1,320 +1,126 @@
-# 🚀 FinService-Bot
+# FinService Bot
 
-A production-ready Telegram automation system for routing financial referral offers to service-specific channels, with enterprise-grade database support and deployment infrastructure.
+A Telegram bot that routes administrator-reviewed financial referral offers to verified Telegram channels. Runs in **polling mode** with a local SQLite database — no cloud infrastructure or webhooks required.
 
-## ✨ Features
+> This project is an information and referral system. It is not a lender, insurer, broker, or financial adviser.
 
-### Core Features
-- **Deterministic Routing**: Maps 13+ service types to specific Telegram channels
-- **Multilingual Support**: English, Hindi, and Gujarati templates
-- **Automated Scheduler**: Posts offers on configurable intervals (default 1.6 hours)
-- **Admin Command Interface**: 8 admin commands for offer and channel management
-- **Bulk CSV Import**: Import offers in bulk with validation
+## Features
 
-### Enterprise Features
-- **Universal Database Layer**: SQLite + PostgreSQL with automatic fallback
-- **Neon PostgreSQL Integration**: Serverless PostgreSQL via Neon (optional)
-- **MCP Server**: 11 database tools exposed via Model Context Protocol
-- **Health Checks**: Built-in HTTP health endpoints for monitoring (port 8000/8001)
-- **Multi-Platform Deployment**: Render, Heroku, Replit, self-hosted VPS
-- **Comprehensive Testing**: 30+ test scenarios with 100% pass rate
-- **Error Logging**: Detailed error context and debugging information
+- 13 financial-service categories with English, Hindi, and Gujarati rendering
+- Administrator-only offer submission via single CSV row or bulk CSV upload
+- HTTPS and approved-domain validation for referral links
+- Per-service Telegram channel routing with bot-admin verification
+- Duplicate offer fingerprint protection
+- Safe publication retry with ambiguous-delivery review flag
+- Privacy deletion (`/delete_me`) and full audit logging
 
-## 🛠 Tech Stack
+## Requirements
 
-**Core**:
-- Python 3.8+
-- python-telegram-bot v20.7+
-- python-dotenv 1.0.0+
+- Python 3.11+
+- A Telegram bot token from [@BotFather](https://t.me/BotFather)
+- At least one Telegram administrator user ID
 
-**Database**:
-- SQLite 3 (default)
-- PostgreSQL via Neon (optional)
-- psycopg2-binary & asyncpg drivers
-
-**Deployment**:
-- Render.com (web + background worker)
-- Heroku (multi-dyno)
-- Replit
-- Self-hosted VPS
-
-## 🚀 Quick Start
-
-### 1. Setup & Installation
+## Installation
 
 ```bash
-# Clone project
-git clone <repo>
-cd FinService-Bot
+pip install -e ".[dev]"
+```
 
-# Install dependencies
-pip install -r requirements.txt
+## Configuration
 
-# Create .env file
+Copy the example env file and fill in your values:
+
+```bash
 cp .env.example .env
-# Edit with your TELEGRAM_BOT_TOKEN and ADMIN_IDS
 ```
 
-### 2. Local Testing
+| Variable | Required | Description |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | ✅ | Token from @BotFather |
+| `ADMIN_IDS` | ✅ | Comma-separated Telegram user IDs |
+| `ALLOWED_REFERRAL_DOMAINS` | — | Approved domains for referral links |
+| `SERVICE_CONFIG_PATH` | — | Path to services.yaml (default: `config/services.yaml`) |
+| `SESSION_TTL_MINUTES` | — | Workflow session timeout (default: 30) |
+| `PUBLISH_BATCH_SIZE` | — | Offers published per cycle (default: 10) |
+| `MAX_CSV_ROWS` | — | Maximum rows per CSV upload (default: 1000) |
+
+## Running
 
 ```bash
-# Run tests
-python test_db_universal.py    # Database: 10/10 ✅
-python test_all_commands.py    # Commands: 12/12 ✅
-python test_startup.py         # Startup: All ✅
+# With .env file
+finservice-bot --env-file .env poll
 
-# Run bot
-python main.py
+# Custom database path
+finservice-bot --env-file .env poll --db /path/to/bot.db
 
-# In another terminal, run scheduler
-python schedular.py
+# Verbose logging
+finservice-bot --env-file .env --log-level DEBUG poll
 ```
 
-### 3. PostgreSQL Setup (Optional)
+## Commands
+
+### Public
+
+| Command | Description |
+|---|---|
+| `/start` | Start the bot |
+| `/help` | List available commands |
+| `/privacy` | View data handling information |
+| `/delete_me` | Delete your user data |
+
+### Administrator
+
+| Command | Description |
+|---|---|
+| `/add_offer` | Queue one offer (interactive CSV row) |
+| `/template` | Download the CSV column template |
+| `/setup_channels <key> <@channel>` | Verify and activate a service channel |
+| `/list_services` | List all service routes and channel status |
+| `/stats` | Show offer counts by status |
+| `/audit` | View recent audit log entries |
+| `/prune` | Remove expired sessions and history |
+| `/block <user_id>` | Block a user |
+| `/unblock <user_id>` | Unblock a user |
+| `/cancel` | Cancel an active workflow session |
+
+## CSV Format
+
+Offers are submitted via `/add_offer` (one row) or a CSV file upload.
+
+Required columns: `service_type`, `provider`, `title_en`, `referral_link`
+
+Optional columns: `title_hi`, `title_gu`, `description_en`, `description_hi`, `description_gu`, `validity`, `terms`
+
+Use `/template` to download a filled example.
+
+### Service Types
+
+`credit_card` · `loan_personal` · `loan_business` · `loan_home` · `bank_account_savings` · `bank_account_current` · `credit_builder` · `insurance_health` · `insurance_vehicle` · `insurance_pa` · `demat_account` · `investment_mutual_fund` · `investment_fixed_income`
+
+## Project Structure
+
+```
+src/finservice_bot/
+    bot/            Telegram handlers and application builder
+    services/       Channel verification and offer publisher
+    storage/        SQLite repository and schema
+    config.py       Service catalog loader
+    cli.py          Command-line entry point
+    settings.py     Environment-based configuration
+    validation.py   CSV and URL validation
+    rendering.py    Multi-language Telegram HTML renderer
+config/
+    services.yaml   Financial-service catalog (13 services)
+tests/
+    unit/           Unit and integration tests
+```
+
+## Running Tests
 
 ```bash
-# Interactive setup with Neon
-python setup_neon.py
-
-# Follow prompts to:
-# 1. Get Neon connection string
-# 2. Configure DATABASE_URL in .env
-# 3. Test connection
-# 4. Run verification
+pytest tests/unit -q
 ```
 
-### 4. Deployment
+## License
 
-**Render.com**:
-```bash
-git push origin main
-# Deploy from Render.com dashboard using render.yaml
-```
-
-**Heroku**:
-```bash
-heroku create your-app
-heroku config:set TELEGRAM_BOT_TOKEN="..."
-git push heroku main
-```
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed platform-specific instructions.
-
-## 📋 Bot Commands
-
-| Command | Admin Only | Purpose |
-|---------|:----------:|---------|
-| `/start` | No | Show bot status and options |
-| `/help` | No | Show command help |
-| `/stats` | Yes | View offer queue statistics |
-| `/list_services` | Yes | List all service categories and their channels |
-| `/add_offer` | Yes | Interactively add a new referral vector |
-| `/setup_channels` | Yes | Configure or update channel IDs for services |
-| `/cancel` | Yes | Abort the current interactive session |
-| `/block` | Yes | Block a user by ID from using the bot |
-| `/unblock` | Yes | Unblock a user by ID |
-
-### 📥 Bulk Import
-Admins can upload a **CSV file** to the bot to inject multiple offers at once. The bot will validate the structure and integrate the vectors into the database automatically.
-
-## 📊 Service Categories (13 Types)
-
-- Credit Cards
-- Personal Loans
-- Business Loans
-- Home Loans
-- Savings Accounts
-- Current Accounts
-- Credit Builder
-- Health Insurance
-- Vehicle Insurance
-- Personal Accident Insurance
-- Demat Accounts
-- Mutual Funds
-- Fixed Income Products
-
-## 📂 Project Structure
-
-```
-FinService-Bot/
-├── main.py                  (Interactive bot + health check)
-├── bot.py                   (Admin bot variant)
-├── schedular.py             (Background scheduler)
-├── admin_commands.py         (8 admin commands)
-├── db_layer.py              (Original SQLite)
-├── db_layer_universal.py    (NEW: SQLite/PostgreSQL)
-├── mcp_server.py            (NEW: MCP protocol handler)
-├── config_schema.py         (Service taxonomy)
-├── templates.py             (Multilingual templates)
-├── csv_validator.py         (CSV import validation)
-├── setup_neon.py            (NEW: Neon setup wizard)
-├── services_config.yaml     (Service mappings)
-├── render.yaml              (Render deployment)
-├── Procfile                 (Heroku deployment)
-├── .env                     (Local secrets)
-├── .gitignore               (Git exclusions)
-├── requirements.txt         (Dependencies)
-├── README.md                (This file)
-├── DEPLOYMENT.md            (4-platform guide)
-├── NEON_SETUP.md            (PostgreSQL setup)
-├── PROJECT_COMPLETION.md    (Completion report)
-└── test_*.py                (Test suites)
-```
-
-## 🗄️ Database
-
-### SQLite (Default)
-- No setup required
-- File-based: `fin_referrals.db`
-- Perfect for local development
-
-### PostgreSQL via Neon (Optional)
-- Serverless PostgreSQL cloud database
-- Free tier: 5 GB storage, 3 GiB compute/month
-- Automatic table creation on first connection
-- Connection string via `DATABASE_URL` environment variable
-
-### Automatic Fallback
-If `DATABASE_URL` is set but PostgreSQL is unavailable, automatically falls back to SQLite - no code changes needed.
-
-## 🔗 MCP Server
-
-The MCP (Model Context Protocol) server exposes 11 database tools:
-
-```bash
-python mcp_server.py
-
-# Examples
-echo '{"tool": "health_check"}' | python mcp_server.py
-echo '{"tool": "get_stats"}' | python mcp_server.py
-echo '{"tool": "get_offers", "params": {"service_type": "credit_card"}}' | python mcp_server.py
-```
-
-Tools available:
-- `get_offers` - Retrieve offers by service/status
-- `add_offer` - Add new offer
-- `get_stats` - Get statistics
-- `get_services` - List services
-- `get_channel` - Get channel for service
-- `update_channel` - Update channel mapping
-- `block_user` / `unblock_user` - User management
-- `get_next_offer` - Get next queued offer
-- `mark_offer_posted` - Mark offer status
-- `health_check` - Server health
-
-## 📈 Health Checks
-
-Built-in HTTP health check servers:
-- **main.py**: Port 8000 (`/health`)
-- **bot.py**: Port 8000 (`/health`)
-- **schedular.py**: Port 8001 (`/health`)
-
-Perfect for monitoring and deployment platforms (Render, Heroku, K8s).
-
-## 🧪 Testing
-
-```bash
-# Run all tests
-python test_db_universal.py    # Database layer: 10/10 ✅
-python test_all_commands.py    # Commands: 12/12 ✅
-python test_startup.py         # Startup checks ✅
-python test_debug.py           # Full debug suite ✅
-
-# Validate syntax
-python -m py_compile *.py      # All files valid ✅
-```
-
-## 📚 Documentation
-
-1. **README.md** (this file) - Project overview & quick start
-2. **NEON_SETUP.md** - PostgreSQL via Neon setup guide
-3. **DEPLOYMENT.md** - Deploy to Render, Heroku, Replit, VPS
-4. **PROJECT_COMPLETION.md** - Complete project report
-5. **FIXES_AND_DEBUGGING.md** - Historical fixes & debugging
-
-## 🔐 Security
-
-✅ Environment variables via `.env` (not committed)
-✅ Admin-only command authorization
-✅ User blocking system
-✅ No hardcoded secrets
-✅ Input validation
-✅ SSL/TLS ready
-
-## 🚀 Deployment
-
-### Status
-- ✅ Render.com: Multi-service (web + scheduler)
-- ✅ Heroku: Multi-dyno (Procfile)
-- ✅ Replit: Built-in environment
-- ✅ Self-hosted VPS: Documented
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions.
-
-## 💾 Database Schema
-
-### users table
-- user_id (Primary Key)
-- username
-- blocked (Boolean)
-- joined_at (Timestamp)
-
-### offers table
-- id (Serial Primary Key)
-- service_type
-- provider
-- Multilingual titles (EN/HI/GU)
-- referral_link
-- status (queued/posted/failed)
-- created_at, updated_at
-
-### posting_history table
-- id (Serial)
-- offer_id (Foreign Key)
-- posted_at
-- result (success/fail)
-
-## 🎯 Performance
-
-| Operation | Time |
-|-----------|------|
-| Connect | <100ms |
-| Get stats | <200ms |
-| Next queued offer | <50ms |
-| Insert offer | <100ms |
-
-## 📝 License
-
-See [LICENSE](LICENSE) file.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing`)
-5. Open Pull Request
-
-## 📧 Support
-
-For issues or questions:
-1. Check [DEPLOYMENT.md](DEPLOYMENT.md) for platform-specific help
-2. Review [FIXES_AND_DEBUGGING.md](FIXES_AND_DEBUGGING.md) for known issues
-3. Run test suites to verify setup
-4. Check logs for detailed error messages
-
-## 🎉 Status
-
-✅ **Production Ready**
-- All tests passing (30+ scenarios)
-- Enterprise features implemented
-- Multi-platform deployment ready
-- Comprehensive documentation
-
----
-
-**Version**: 1.0.0 (Production Release)
-**Last Updated**: February 18, 2026
-**Status**: ✅ Stable & Tested
-
-- `/help`: Detailed command guide.
+See [LICENSE](LICENSE).

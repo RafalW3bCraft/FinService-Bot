@@ -1,10 +1,7 @@
-modules = ["bash", "python-3.11"]
-[agent]
-expertMode = true
-
+modules = ["python-3.11"]
 [nix]
 channel = "stable-25_05"
-packages = ["libxcrypt", "libyaml"]
+packages = ["libyaml"]
 
 [workflows]
 runButton = "Project"
@@ -16,23 +13,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Telegram Bot Core"
+args = "Start application"
 
 [[workflows.workflow]]
-name = "Telegram Bot Core"
+name = "Start application"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python main.py"
+args = "finservice-bot --env-file .env --log-level INFO poll"
 
 [workflows.workflow.metadata]
 outputType = "console"
-
-[[ports]]
-localPort = 8000
-externalPort = 80
-
-[deployment]
-deploymentTarget = "vm"
-run = ["python", "main.py"]
