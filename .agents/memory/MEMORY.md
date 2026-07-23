@@ -1,0 +1,4 @@
+- [Publisher bot injection](publisher-bot-injection.md) — bot passed as param to publish_due(bot=…), not stored as mutable attribute; tests updated to match
+- [Channel error strings](channel-errors.md) — channel verification failures are human-readable strings shown directly to admins; tests assert on content, not exact strings
+- [All-duplicates CSV fix](validation-duplicates.md) — ValidationResult.valid is now `not errors` (not `bool(offers) and not errors`); all-duplicate CSV correctly returns valid=True
+- [delete_user_data race fix](delete-user-data-race.md) — draft/queued offers zeroed+archived; publishing offers get claim_token nulled+archived but JSON preserved so _row_to_offer never crashes

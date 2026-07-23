@@ -191,6 +191,14 @@ class BotHandlers:
     async def help(self, update: Any, context: Any) -> None:
         del context
         user_id, message = self._identity(update)
+        user = await self.repository.touch_user(
+            user_id,
+            is_admin=user_id in self.settings.admin_ids,
+            now=datetime.now(UTC),
+        )
+        if user.blocked:
+            await message.reply_text(_WELCOME_BLOCKED)
+            return
         text = _HELP_PUBLIC
         if user_id in self.settings.admin_ids:
             text += _HELP_ADMIN_EXTRA
@@ -198,7 +206,15 @@ class BotHandlers:
 
     async def privacy(self, update: Any, context: Any) -> None:
         del context
-        _, message = self._identity(update)
+        user_id, message = self._identity(update)
+        user = await self.repository.touch_user(
+            user_id,
+            is_admin=user_id in self.settings.admin_ids,
+            now=datetime.now(UTC),
+        )
+        if user.blocked:
+            await message.reply_text(_WELCOME_BLOCKED)
+            return
         await message.reply_text(_PRIVACY, parse_mode="HTML")
 
     async def language(self, update: Any, context: Any) -> None:
@@ -483,17 +499,24 @@ class BotHandlers:
         await self._set_blocked(update, context, blocked=False)
 
     async def cancel(self, update: Any, context: Any) -> None:
+        """Cancel any active session. Works for all users, not just admins."""
         del context
-        authorized = await self._require_admin(update)
-        if authorized is None:
-            return
-        user_id, message = authorized
+        user_id, message = self._identity(update)
         await self.repository.delete_session(user_id)
-        await message.reply_text("✅ Workflow cancelled. Use /add_offer to start a new one.")
+        if user_id in self.settings.admin_ids:
+            await message.reply_text("✅ Workflow cancelled. Use /add_offer to start a new one.")
+        else:
+            await message.reply_text("✅ Cancelled.")
 
     # ── Callback query dispatcher ─────────────────────────────────────────────
 
     async def handle_callback_query(self, update: Any, context: Any) -> None:
+        """Route inline keyboard callbacks via a dispatch table.
+
+        Exact matches are looked up in ``_EXACT_HANDLERS``; prefix matches
+        are iterated in order. Adding a new callback requires only a new
+        ``_cb_*`` method and an entry in one of these two structures.
+        """
         del context
         query = update.callback_query
         if query is None:
@@ -503,182 +526,227 @@ class BotHandlers:
         data: str = query.data or ""
         now = datetime.now(UTC)
 
-        # ── Universal cancel ──────────────────────────────────────────────────
-        if data == "cancel_action":
-            await query.edit_message_text("✅ Cancelled.")
+        # Exact-match dispatch
+        exact_handlers: dict[str, Any] = {
+            "cancel_action":  self._cb_cancel_action,
+            "confirm_delete": self._cb_confirm_delete,
+            "confirm_prune":  self._cb_confirm_prune,
+            "wizard_confirm": self._cb_wizard_confirm,
+            "wizard_restart": self._cb_wizard_restart,
+            "wizard_cancel":  self._cb_wizard_cancel,
+        }
+        if data in exact_handlers:
+            await exact_handlers[data](query, user_id, data, now)
             return
 
-        # ── Delete my data ────────────────────────────────────────────────────
-        if data == "confirm_delete":
-            await self.repository.touch_user(
-                user_id,
-                is_admin=user_id in self.settings.admin_ids,
-                now=now,
-            )
-            await self.repository.record_audit_event(
-                actor_user_id=user_id,
-                action="privacy.delete",
-                target_type="user",
-                target_id=str(user_id),
-                result="success",
-                safe_details={},
-                now=now,
-            )
-            await self.repository.delete_user_data(user_id, now=now)
-            await query.edit_message_text("🗑 Your account data has been permanently erased.")
-            return
+        # Prefix-match dispatch (order matters for overlapping prefixes)
+        prefix_handlers: tuple[tuple[str, Any], ...] = (
+            ("confirm_block:",   self._cb_confirm_block),
+            ("confirm_unblock:", self._cb_confirm_unblock),
+            ("wizard_svc:",      self._cb_wizard_svc),
+            ("lang:",            self._cb_lang),
+        )
+        for prefix, handler in prefix_handlers:
+            if data.startswith(prefix):
+                await handler(query, user_id, data, now)
+                return
 
-        # ── Prune ─────────────────────────────────────────────────────────────
-        if data == "confirm_prune":
-            if not self._is_admin(user_id):
-                await query.edit_message_text("🚫 Not authorised.")
-                return
-            deleted = await self.repository.prune_expired(now=now)
-            await query.edit_message_text(f"✅ Pruned {deleted} expired record(s).")
-            return
+    # ── Callback implementations ──────────────────────────────────────────────
 
-        # ── Block / Unblock ───────────────────────────────────────────────────
-        if data.startswith("confirm_block:") or data.startswith("confirm_unblock:"):
-            if not self._is_admin(user_id):
-                await query.edit_message_text("🚫 Not authorised.")
-                return
-            blocking = data.startswith("confirm_block:")
-            try:
-                target = int(data.split(":", 1)[1])
-            except (ValueError, IndexError):
-                await query.edit_message_text("⚠️ Invalid user ID.")
-                return
-            changed = await self.repository.set_user_blocked(
-                target, blocked=blocking, now=now
-            )
-            verb = "blocked" if blocking else "unblocked"
-            if changed:
-                await query.edit_message_text(
-                    f"✅ User <code>{target}</code> has been {verb}.",
-                    parse_mode="HTML",
-                )
-            else:
-                await query.edit_message_text(
-                    f"⚠️ User <code>{target}</code> was not found in the database.",
-                    parse_mode="HTML",
-                )
-            return
+    async def _cb_cancel_action(
+        self, query: Any, user_id: int, data: str, now: datetime
+    ) -> None:
+        del user_id, data, now
+        await query.edit_message_text("✅ Cancelled.")
 
-        # ── Wizard: service selection ─────────────────────────────────────────
-        if data.startswith("wizard_svc:"):
-            if not self._is_admin(user_id):
-                await query.edit_message_text("🚫 Not authorised.")
-                return
-            key = data[len("wizard_svc:"):]
-            if key not in self.catalog.keys():
-                await query.edit_message_text("⚠️ Unknown service key.")
-                return
-            svc = self.catalog.get(key)
-            nonce = secrets.token_urlsafe(24)
-            await self.repository.save_session(SessionRecord(
-                telegram_user_id=user_id,
-                state=AdminState.WIZARD_PROVIDER.value,
-                nonce_hash=hashlib.sha256(nonce.encode()).hexdigest(),
-                payload={"service_type": key, "_nonce": nonce},
-                created_at=now,
-                updated_at=now,
-                expires_at=now + timedelta(minutes=self.settings.session_ttl_minutes),
-            ))
+    async def _cb_confirm_delete(
+        self, query: Any, user_id: int, data: str, now: datetime
+    ) -> None:
+        del data
+        await self.repository.touch_user(
+            user_id,
+            is_admin=user_id in self.settings.admin_ids,
+            now=now,
+        )
+        await self.repository.record_audit_event(
+            actor_user_id=user_id,
+            action="privacy.delete",
+            target_type="user",
+            target_id=str(user_id),
+            result="success",
+            safe_details={},
+            now=now,
+        )
+        await self.repository.delete_user_data(user_id, now=now)
+        await query.edit_message_text("🗑 Your account data has been permanently erased.")
+
+    async def _cb_confirm_prune(
+        self, query: Any, user_id: int, data: str, now: datetime
+    ) -> None:
+        del data
+        if not self._is_admin(user_id):
+            await query.edit_message_text("🚫 Not authorised.")
+            return
+        deleted = await self.repository.prune_expired(now=now)
+        await query.edit_message_text(f"✅ Pruned {deleted} expired record(s).")
+
+    async def _cb_confirm_block(
+        self, query: Any, user_id: int, data: str, now: datetime
+    ) -> None:
+        if not self._is_admin(user_id):
+            await query.edit_message_text("🚫 Not authorised.")
+            return
+        try:
+            target = int(data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            await query.edit_message_text("⚠️ Invalid user ID.")
+            return
+        changed = await self.repository.set_user_blocked(target, blocked=True, now=now)
+        if changed:
             await query.edit_message_text(
-                f"🧭 <b>New offer — step 2 of 4</b>\n\n"
-                f"Category: {svc.icon} <b>{svc.display_name(Language.ENGLISH)}</b>\n\n"
-                "Enter the <b>provider name</b>\n"
-                "<i>e.g. HDFC Bank, ICICI, SBI, Bajaj Finance</i>",
+                f"✅ User <code>{target}</code> has been blocked.", parse_mode="HTML"
+            )
+        else:
+            await query.edit_message_text(
+                f"⚠️ User <code>{target}</code> was not found in the database.",
                 parse_mode="HTML",
             )
-            return
 
-        # ── Wizard: confirm → queue ───────────────────────────────────────────
-        if data == "wizard_confirm":
-            if not self._is_admin(user_id):
-                await query.edit_message_text("🚫 Not authorised.")
-                return
-            session = await self.repository.get_session(user_id, now=now)
-            if session is None or session.state != AdminState.WIZARD_CONFIRM.value:
-                await query.edit_message_text(
-                    "⚠️ Session expired. Use /add_offer to start again."
-                )
-                return
-            p = session.payload
-            offer = Offer(
-                service_type=p["service_type"],
-                provider=p["provider"],
-                title_en=p["title_en"],
-                referral_link=p["referral_link"],
-            )
-            try:
-                await self.repository.create_offer(
-                    offer, created_by=user_id, scheduled_at=now, now=now
-                )
-                queued, duplicates = 1, 0
-            except DuplicateOfferError:
-                queued, duplicates = 0, 1
-            await self.repository.delete_session(user_id)
-            await self.repository.record_audit_event(
-                actor_user_id=user_id,
-                action="offer.import",
-                target_type="offer_batch",
-                target_id="wizard",
-                result="success",
-                safe_details={"queued": queued, "duplicates": duplicates},
-                now=now,
-            )
-            if queued:
-                svc = self.catalog.get(p["service_type"])
-                await query.edit_message_text(
-                    f"✅ <b>Offer queued successfully</b>\n\n"
-                    f"{svc.icon} <b>{svc.display_name(Language.ENGLISH)}</b>\n"
-                    f"Provider: {p['provider']}",
-                    parse_mode="HTML",
-                )
-            else:
-                await query.edit_message_text(
-                    "⏭ This offer already exists — duplicate skipped."
-                )
+    async def _cb_confirm_unblock(
+        self, query: Any, user_id: int, data: str, now: datetime
+    ) -> None:
+        if not self._is_admin(user_id):
+            await query.edit_message_text("🚫 Not authorised.")
             return
-
-        # ── Wizard: start over ────────────────────────────────────────────────
-        if data == "wizard_restart":
-            if not self._is_admin(user_id):
-                await query.edit_message_text("🚫 Not authorised.")
-                return
-            await self.repository.delete_session(user_id)
+        try:
+            target = int(data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            await query.edit_message_text("⚠️ Invalid user ID.")
+            return
+        changed = await self.repository.set_user_blocked(target, blocked=False, now=now)
+        if changed:
             await query.edit_message_text(
-                "🧭 <b>New offer — step 1 of 4</b>\n\nSelect a service category:",
-                parse_mode="HTML",
-                reply_markup=_service_keyboard(self.catalog),
+                f"✅ User <code>{target}</code> has been unblocked.", parse_mode="HTML"
             )
-            return
-
-        # ── Wizard: cancel ────────────────────────────────────────────────────
-        if data == "wizard_cancel":
-            await self.repository.delete_session(user_id)
-            await query.edit_message_text("✅ Offer creation cancelled.")
-            return
-
-        # ── Language selection ────────────────────────────────────────────────
-        if data.startswith("lang:"):
-            code = data[len("lang:"):]
-            if code not in ("en", "hi", "gu"):
-                await query.edit_message_text("⚠️ Unknown language code.")
-                return
-            await self.repository.touch_user(
-                user_id,
-                is_admin=user_id in self.settings.admin_ids,
-                now=now,
-            )
-            await self.repository.set_display_language(user_id, language=code, now=now)
-            name = _LANG_DISPLAY.get(code, code)
+        else:
             await query.edit_message_text(
-                f"✅ Language set to <b>{name}</b>.",
+                f"⚠️ User <code>{target}</code> was not found in the database.",
                 parse_mode="HTML",
             )
+
+    async def _cb_wizard_svc(
+        self, query: Any, user_id: int, data: str, now: datetime
+    ) -> None:
+        if not self._is_admin(user_id):
+            await query.edit_message_text("🚫 Not authorised.")
             return
+        key = data[len("wizard_svc:"):]
+        if key not in self.catalog.keys():
+            await query.edit_message_text("⚠️ Unknown service key.")
+            return
+        svc = self.catalog.get(key)
+        nonce = secrets.token_urlsafe(24)
+        await self.repository.save_session(SessionRecord(
+            telegram_user_id=user_id,
+            state=AdminState.WIZARD_PROVIDER.value,
+            nonce_hash=hashlib.sha256(nonce.encode()).hexdigest(),
+            payload={"service_type": key, "_nonce": nonce},
+            created_at=now,
+            updated_at=now,
+            expires_at=now + timedelta(minutes=self.settings.session_ttl_minutes),
+        ))
+        await query.edit_message_text(
+            f"🧭 <b>New offer — step 2 of 4</b>\n\n"
+            f"Category: {svc.icon} <b>{svc.display_name(Language.ENGLISH)}</b>\n\n"
+            "Enter the <b>provider name</b>\n"
+            "<i>e.g. HDFC Bank, ICICI, SBI, Bajaj Finance</i>",
+            parse_mode="HTML",
+        )
+
+    async def _cb_wizard_confirm(
+        self, query: Any, user_id: int, data: str, now: datetime
+    ) -> None:
+        del data
+        if not self._is_admin(user_id):
+            await query.edit_message_text("🚫 Not authorised.")
+            return
+        session = await self.repository.get_session(user_id, now=now)
+        if session is None or session.state != AdminState.WIZARD_CONFIRM.value:
+            await query.edit_message_text("⚠️ Session expired. Use /add_offer to start again.")
+            return
+        p = session.payload
+        offer = Offer(
+            service_type=p["service_type"],
+            provider=p["provider"],
+            title_en=p["title_en"],
+            referral_link=p["referral_link"],
+        )
+        try:
+            await self.repository.create_offer(
+                offer, created_by=user_id, scheduled_at=now, now=now
+            )
+            queued, duplicates = 1, 0
+        except DuplicateOfferError:
+            queued, duplicates = 0, 1
+        await self.repository.delete_session(user_id)
+        await self.repository.record_audit_event(
+            actor_user_id=user_id,
+            action="offer.import",
+            target_type="offer_batch",
+            target_id="wizard",
+            result="success",
+            safe_details={"queued": queued, "duplicates": duplicates},
+            now=now,
+        )
+        if queued:
+            svc = self.catalog.get(p["service_type"])
+            await query.edit_message_text(
+                f"✅ <b>Offer queued successfully</b>\n\n"
+                f"{svc.icon} <b>{svc.display_name(Language.ENGLISH)}</b>\n"
+                f"Provider: {p['provider']}",
+                parse_mode="HTML",
+            )
+        else:
+            await query.edit_message_text("⏭ This offer already exists — duplicate skipped.")
+
+    async def _cb_wizard_restart(
+        self, query: Any, user_id: int, data: str, now: datetime
+    ) -> None:
+        del data
+        if not self._is_admin(user_id):
+            await query.edit_message_text("🚫 Not authorised.")
+            return
+        await self.repository.delete_session(user_id)
+        await query.edit_message_text(
+            "🧭 <b>New offer — step 1 of 4</b>\n\nSelect a service category:",
+            parse_mode="HTML",
+            reply_markup=_service_keyboard(self.catalog),
+        )
+
+    async def _cb_wizard_cancel(
+        self, query: Any, user_id: int, data: str, now: datetime
+    ) -> None:
+        del user_id, data, now
+        await query.edit_message_text("✅ Offer creation cancelled.")
+
+    async def _cb_lang(
+        self, query: Any, user_id: int, data: str, now: datetime
+    ) -> None:
+        code = data[len("lang:"):]
+        if code not in ("en", "hi", "gu"):
+            await query.edit_message_text("⚠️ Unknown language code.")
+            return
+        await self.repository.touch_user(
+            user_id,
+            is_admin=user_id in self.settings.admin_ids,
+            now=now,
+        )
+        await self.repository.set_display_language(user_id, language=code, now=now)
+        name = _LANG_DISPLAY.get(code, code)
+        await query.edit_message_text(
+            f"✅ Language set to <b>{name}</b>.",
+            parse_mode="HTML",
+        )
 
     # ── Private helpers ───────────────────────────────────────────────────────
 

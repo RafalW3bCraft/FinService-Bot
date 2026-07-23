@@ -29,6 +29,7 @@ class DuplicateOfferError(ValueError):
 
 _DDL = """
 PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=5000;
 
 CREATE TABLE IF NOT EXISTS schema_meta (
     key   TEXT PRIMARY KEY,
@@ -113,6 +114,23 @@ CREATE TABLE IF NOT EXISTS publication_rate_limits (
     count      INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
+
+-- Performance indexes (idempotent)
+CREATE INDEX IF NOT EXISTS idx_offers_status_scheduled
+    ON offers(status, scheduled_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_offers_fingerprint_active
+    ON offers(fingerprint)
+    WHERE status IN ('queued', 'publishing', 'published');
+
+CREATE INDEX IF NOT EXISTS idx_sessions_expires
+    ON sessions(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_posting_history_expires
+    ON posting_history(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_created
+    ON audit_events(created_at);
 """
 
 
@@ -255,12 +273,25 @@ class SqliteRepository:
                WHERE telegram_user_id = ?""",
             (_dt(now), telegram_user_id),
         )
+        # Archive draft/queued offers and zero their content (privacy erasure).
+        # Offers already claimed (status='publishing') have their claim_token
+        # nulled so the publisher's finalize step rejects them; their JSON is
+        # preserved so _row_to_offer never crashes on empty payload.
         await self.db.execute(
             """UPDATE offers SET
                status = 'archived',
                offer_json = '{}',
                updated_at = ?
-               WHERE created_by = ? AND status IN ('draft', 'queued', 'publishing')""",
+               WHERE created_by = ? AND status IN ('draft', 'queued')""",
+            (_dt(now), telegram_user_id),
+        )
+        await self.db.execute(
+            """UPDATE offers SET
+               status = 'archived',
+               claim_token = NULL,
+               claim_expires_at = NULL,
+               updated_at = ?
+               WHERE created_by = ? AND status = 'publishing'""",
             (_dt(now), telegram_user_id),
         )
         await self.db.commit()
@@ -705,7 +736,17 @@ def _dt(dt: datetime) -> str:
 
 
 def _parse_dt(value: str) -> datetime:
-    return datetime.fromisoformat(value).replace(tzinfo=UTC)
+    """Parse an ISO datetime string and normalise to UTC.
+
+    Naive datetimes (no tzinfo) are assumed to be UTC — this matches how
+    ``_dt`` stores them via ``datetime.isoformat()`` on UTC-aware objects.
+    Aware datetimes with a non-UTC offset are converted correctly with
+    ``astimezone`` rather than blindly replacing the offset.
+    """
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def _row_to_offer(row: aiosqlite.Row) -> OfferRecord:

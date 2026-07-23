@@ -6,6 +6,13 @@ from html import escape
 
 from .models import Language, Offer, ServiceConfig
 
+# Telegram hard limit for sendMessage text payload
+MAX_TELEGRAM_MESSAGE_BYTES = 4096
+
+
+class MessageTooLongError(ValueError):
+    """Raised when a rendered message exceeds Telegram's 4096-byte limit."""
+
 
 DISCLAIMERS = {
     Language.ENGLISH: "Referral link; not financial advice. Review provider terms before applying.",
@@ -49,16 +56,30 @@ def render_offer(offer: Offer, service: ServiceConfig, language: Language) -> st
 
 
 def render_message(offer: Offer, service: ServiceConfig, rotation_index: int = 0) -> str:
-    if service.language_mode == "single":
-        return render_offer(offer, service, service.default_language)
-    if service.language_mode == "rotating":
-        languages = tuple(Language)
-        return render_offer(offer, service, languages[rotation_index % len(languages)])
+    """Render the full Telegram message for an offer.
 
-    sections = [render_offer(offer, service, Language.ENGLISH)]
-    if offer.title_hi:
-        sections.append(render_offer(offer, service, Language.HINDI))
-    if offer.title_gu:
-        sections.append(render_offer(offer, service, Language.GUJARATI))
-    return "\n\n──────────\n\n".join(sections)
+    Raises:
+        MessageTooLongError: if the rendered text exceeds Telegram's 4096-byte
+            limit. The publisher catches this and marks the offer as FAILED
+            with error_code ``"message_too_long"`` so operators can correct it.
+    """
+    if service.language_mode == "single":
+        text = render_offer(offer, service, service.default_language)
+    elif service.language_mode == "rotating":
+        languages = tuple(Language)
+        text = render_offer(offer, service, languages[rotation_index % len(languages)])
+    else:
+        sections = [render_offer(offer, service, Language.ENGLISH)]
+        if offer.title_hi:
+            sections.append(render_offer(offer, service, Language.HINDI))
+        if offer.title_gu:
+            sections.append(render_offer(offer, service, Language.GUJARATI))
+        text = "\n\n──────────\n\n".join(sections)
+
+    if len(text.encode("utf-8")) > MAX_TELEGRAM_MESSAGE_BYTES:
+        raise MessageTooLongError(
+            f"Rendered message exceeds {MAX_TELEGRAM_MESSAGE_BYTES} bytes "
+            f"(got {len(text.encode('utf-8'))}). Shorten the offer descriptions."
+        )
+    return text
 

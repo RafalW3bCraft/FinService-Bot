@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from .models import SERVICE_KEYS, Language, ServiceConfig
+from .services.channels import CHANNEL_ID_RE
 
 
 class CatalogError(ValueError):
@@ -66,8 +67,11 @@ def _parse_service(key: str, raw: Any) -> ServiceConfig:
         raise CatalogError(f"Service {key} must be a mapping")
 
     channel_id = _required_text(raw, "channel_id", key)
-    if not channel_id.startswith("@") or len(channel_id) < 2:
-        raise CatalogError(f"Service {key} channel_id must start with @")
+    if not CHANNEL_ID_RE.fullmatch(channel_id):
+        raise CatalogError(
+            f"Service {key} channel_id must be a valid Telegram username "
+            f"(@letter + 4–31 alphanumeric/underscore)"
+        )
 
     language_mode = str(raw.get("language_mode", "single"))
     if language_mode not in {"single", "multi", "rotating"}:

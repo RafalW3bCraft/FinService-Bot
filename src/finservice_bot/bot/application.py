@@ -61,10 +61,9 @@ def build_polling_application(
             await post_init(app)
         if publisher is not None and app.job_queue is not None:
             async def _publish_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-                publisher.bot = context.bot
                 now = datetime.now(UTC)
                 try:
-                    report = await publisher.publish_due(now=now)
+                    report = await publisher.publish_due(bot=context.bot, now=now)
                     if report.claimed:
                         LOGGER.info(
                             "Publisher: claimed=%d published=%d requeued=%d "
@@ -145,9 +144,9 @@ async def _set_commands(
                 _ADMIN_COMMANDS,
                 scope=BotCommandScopeChat(chat_id=admin_id),
             )
-        except Exception:
-            # Admin may not have opened the bot yet; silently skip
-            pass
+        except Exception as exc:
+            # Admin may not have opened the bot yet; log rather than swallow
+            LOGGER.warning("Could not set admin commands for %d: %s", admin_id, exc)
 
 
 async def _handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

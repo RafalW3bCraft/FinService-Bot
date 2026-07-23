@@ -6,12 +6,24 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
+from telegram import LinkPreviewOptions
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TimedOut
 
 from finservice_bot.config import ServiceCatalog
-from finservice_bot.rendering import render_message
+from finservice_bot.rendering import MessageTooLongError, render_message
 from finservice_bot.storage.schema import OfferRecord, OfferStatus, ServiceRoute
+
+# Error code constants — avoids untyped string literals scattered in the code
+_ERR_ROUTE_UNVERIFIED = "route_unverified"
+_ERR_RATE_LIMIT = "service_rate_limit"
+_ERR_MESSAGE_TOO_LONG = "message_too_long"
+_ERR_RETRY_AFTER = "telegram_retry_after"
+_ERR_FORBIDDEN = "telegram_forbidden"
+_ERR_BAD_REQUEST = "telegram_bad_request"
+_ERR_AMBIGUOUS = "telegram_ambiguous"
+
+_NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 class PublicationRepository(Protocol):
@@ -65,20 +77,21 @@ class Publisher:
         self,
         *,
         repository: PublicationRepository,
-        bot: TelegramSender | None,
         catalog: ServiceCatalog,
         claim_ttl: timedelta,
         batch_size: int,
         interval_seconds: int = 60,
     ) -> None:
         self.repository = repository
-        self.bot = bot
         self.catalog = catalog
         self.claim_ttl = claim_ttl
         self.batch_size = batch_size
         self.interval_seconds = interval_seconds
 
-    async def publish_due(self, *, now: datetime) -> PublishReport:
+    async def publish_due(self, *, bot: TelegramSender, now: datetime) -> PublishReport:
+        """Claim and publish all due offers. ``bot`` is passed at call time
+        rather than stored as a mutable attribute, preventing accidental
+        use before the bot is initialised."""
         claims = await self.repository.claim_due_offers(
             now=now,
             limit=self.batch_size,
@@ -86,11 +99,13 @@ class Publisher:
         )
         report = PublishReport(claimed=len(claims))
         for claim in claims:
-            outcome = await self._publish_one(claim, now=now)
+            outcome = await self._publish_one(claim, bot=bot, now=now)
             report = replace(report, **{outcome: getattr(report, outcome) + 1})
         return report
 
-    async def _publish_one(self, claim: OfferRecord, *, now: datetime) -> str:
+    async def _publish_one(
+        self, claim: OfferRecord, *, bot: TelegramSender, now: datetime
+    ) -> str:
         claim_token = claim.claim_token
         if not claim_token:
             return "review"
@@ -101,7 +116,7 @@ class Publisher:
                 claim.offer_id,
                 claim_token=claim_token,
                 status=OfferStatus.FAILED,
-                error_code="route_unverified",
+                error_code=_ERR_ROUTE_UNVERIFIED,
                 now=now,
             )
             return "failed"
@@ -116,20 +131,31 @@ class Publisher:
                 claim.offer_id,
                 claim_token=claim_token,
                 status=OfferStatus.QUEUED,
-                error_code="service_rate_limit",
+                error_code=_ERR_RATE_LIMIT,
                 now=now,
                 retry_at=now + timedelta(hours=1),
             )
             return "requeued"
 
         service = self.catalog.get(claim.offer.service_type)
-        text = render_message(claim.offer, service, rotation_index=claim.attempt_count - 1)
         try:
-            message = await self.bot.send_message(
+            text = render_message(claim.offer, service, rotation_index=claim.attempt_count - 1)
+        except MessageTooLongError:
+            await self.repository.finalize_failure(
+                claim.offer_id,
+                claim_token=claim_token,
+                status=OfferStatus.FAILED,
+                error_code=_ERR_MESSAGE_TOO_LONG,
+                now=now,
+            )
+            return "failed"
+
+        try:
+            message = await bot.send_message(
                 chat_id=route.channel_id,
                 text=text,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                link_preview_options=_NO_PREVIEW,
             )
         except RetryAfter as exc:
             delay = exc.retry_after
@@ -139,7 +165,7 @@ class Publisher:
                 claim.offer_id,
                 claim_token=claim_token,
                 status=OfferStatus.QUEUED,
-                error_code="telegram_retry_after",
+                error_code=_ERR_RETRY_AFTER,
                 now=now,
                 retry_at=retry_at,
             )
@@ -149,7 +175,7 @@ class Publisher:
                 claim.offer_id,
                 claim_token=claim_token,
                 status=OfferStatus.FAILED,
-                error_code="telegram_forbidden",
+                error_code=_ERR_FORBIDDEN,
                 now=now,
             )
             return "failed"
@@ -158,7 +184,7 @@ class Publisher:
                 claim.offer_id,
                 claim_token=claim_token,
                 status=OfferStatus.FAILED,
-                error_code="telegram_bad_request",
+                error_code=_ERR_BAD_REQUEST,
                 now=now,
             )
             return "failed"
@@ -167,7 +193,7 @@ class Publisher:
                 claim.offer_id,
                 claim_token=claim_token,
                 status=OfferStatus.REVIEW_REQUIRED,
-                error_code="telegram_ambiguous",
+                error_code=_ERR_AMBIGUOUS,
                 now=now,
             )
             return "review"

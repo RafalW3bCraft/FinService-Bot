@@ -4,7 +4,7 @@ from enum import StrEnum
 
 
 class AdminState(StrEnum):
-    # Legacy: admin pastes or uploads a raw CSV row
+    # CSV row mode: admin pastes a single raw CSV row
     AWAITING_OFFER_ROW = "awaiting_offer_row"
 
     # Guided wizard — four sequential text-input steps

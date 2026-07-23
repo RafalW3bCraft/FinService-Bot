@@ -119,8 +119,11 @@ class CSVValidator:
         except csv.Error as exc:
             return self._failed(0, "csv", f"CSV parsing error: {exc}")
 
+        # valid=True when there are no errors, even if all rows were duplicates
+        # (all-duplicate CSV previously returned valid=False with zero errors,
+        # giving the caller a contradictory signal).
         return ValidationResult(
-            valid=bool(offers) and not errors,
+            valid=not errors,
             offers=tuple(offers),
             errors=tuple(errors),
             warnings=tuple(warnings),
@@ -236,6 +239,11 @@ class CSVValidator:
 
 
 def _optional(values: dict[str, str], key: str, limit: int) -> str | None:
+    """Return the field value, silently truncated to ``limit`` characters.
+
+    Returns ``None`` for empty/missing values so callers can use truthiness
+    checks without worrying about empty strings.
+    """
     value = values.get(key, "")
     return value[:limit] or None
 

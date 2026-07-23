@@ -1,4 +1,4 @@
-"""Cloud Firestore persistence adapters."""
+"""SQLite persistence schema exports."""
 
 from .schema import OfferRecord, OfferStatus, ServiceRoute, SessionRecord, UserRecord
 

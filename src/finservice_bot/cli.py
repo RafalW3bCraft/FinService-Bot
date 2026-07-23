@@ -89,7 +89,6 @@ def _poll(arguments: argparse.Namespace) -> None:
 
     publisher = Publisher(
         repository=repository,
-        bot=None,          # bot is injected at runtime via the job context
         catalog=catalog,
         claim_ttl=timedelta(seconds=settings.claim_ttl_seconds),
         batch_size=settings.publish_batch_size,

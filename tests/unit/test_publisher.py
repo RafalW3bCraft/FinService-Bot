@@ -87,10 +87,9 @@ class FakeBot:
         return SimpleNamespace(message_id=101)
 
 
-def publisher(repository: FakeRepository, bot: FakeBot) -> Publisher:
+def publisher(repository: FakeRepository) -> Publisher:
     return Publisher(
         repository=repository,
-        bot=bot,
         catalog=ServiceCatalog.load("config/services.yaml"),
         claim_ttl=timedelta(minutes=2),
         batch_size=10,
@@ -101,7 +100,7 @@ async def test_publisher_sends_safe_html_and_finalizes_claim():
     repository = FakeRepository()
     bot = FakeBot()
 
-    report = await publisher(repository, bot).publish_due(now=NOW)
+    report = await publisher(repository).publish_due(bot=bot, now=NOW)
 
     assert report == PublishReport(claimed=1, published=1, requeued=0, failed=0, review=0)
     assert bot.calls[0]["chat_id"] == "@VerifiedOffers"
@@ -115,7 +114,7 @@ async def test_unverified_route_fails_without_calling_telegram():
     repository.route = route(verified=False)
     bot = FakeBot()
 
-    report = await publisher(repository, bot).publish_due(now=NOW)
+    report = await publisher(repository).publish_due(bot=bot, now=NOW)
 
     assert report.failed == 1
     assert bot.calls == []
@@ -127,7 +126,7 @@ async def test_retry_after_requeues_with_server_delay():
     repository = FakeRepository()
     bot = FakeBot(RetryAfter(timedelta(seconds=30)))
 
-    report = await publisher(repository, bot).publish_due(now=NOW)
+    report = await publisher(repository).publish_due(bot=bot, now=NOW)
 
     assert report.requeued == 1
     failure = repository.failures[0]
@@ -140,7 +139,7 @@ async def test_timeout_is_review_required_to_prevent_duplicate_delivery():
     repository = FakeRepository()
     bot = FakeBot(TimedOut("uncertain delivery"))
 
-    report = await publisher(repository, bot).publish_due(now=NOW)
+    report = await publisher(repository).publish_due(bot=bot, now=NOW)
 
     assert report.review == 1
     assert repository.failures[0]["status"] is OfferStatus.REVIEW_REQUIRED
@@ -151,7 +150,7 @@ async def test_permanent_telegram_error_is_failed_without_leaking_message():
     repository = FakeRepository()
     bot = FakeBot(Forbidden("bot token and channel details must not be stored"))
 
-    report = await publisher(repository, bot).publish_due(now=NOW)
+    report = await publisher(repository).publish_due(bot=bot, now=NOW)
 
     assert report.failed == 1
     assert repository.failures[0]["status"] is OfferStatus.FAILED
@@ -162,7 +161,7 @@ async def test_bad_request_is_permanent_even_though_it_is_a_network_error_subcla
     repository = FakeRepository()
     bot = FakeBot(BadRequest("invalid channel content"))
 
-    report = await publisher(repository, bot).publish_due(now=NOW)
+    report = await publisher(repository).publish_due(bot=bot, now=NOW)
 
     assert report.failed == 1
     assert repository.failures[0]["status"] is OfferStatus.FAILED
@@ -174,7 +173,7 @@ async def test_service_hourly_rate_limit_requeues_without_sending():
     repository.recent_publications = 10
     bot = FakeBot()
 
-    report = await publisher(repository, bot).publish_due(now=NOW)
+    report = await publisher(repository).publish_due(bot=bot, now=NOW)
 
     assert report.requeued == 1
     assert bot.calls == []
