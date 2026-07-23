@@ -32,7 +32,8 @@ _PUBLIC_COMMANDS = [
 ]
 
 _ADMIN_COMMANDS = _PUBLIC_COMMANDS + [
-    BotCommand("add_offer",       "Add a new offer (guided)"),
+    BotCommand("add_offer",       "Add a new offer (guided wizard)"),
+    BotCommand("list_queued",     "View offers waiting to be published"),
     BotCommand("template",        "Download the CSV bulk-import template"),
     BotCommand("setup_channels",  "Link a service to a Telegram channel"),
     BotCommand("list_services",   "Service catalogue & channel status"),
@@ -105,6 +106,7 @@ def _register_handlers(
         "privacy":        callbacks.privacy,
         "delete_me":      callbacks.delete_me,
         "add_offer":      callbacks.add_offer,
+        "list_queued":    callbacks.list_queued,
         "template":       callbacks.template,
         "setup_channels": callbacks.setup_channels,
         "list_services":  callbacks.list_services,

@@ -713,6 +713,18 @@ class SqliteRepository:
             for r in rows
         )
 
+    async def list_queued_offers(self, *, limit: int = 15) -> tuple[OfferRecord, ...]:
+        """Return the oldest queued offers, ordered by scheduled_at ascending."""
+        cursor = await self.db.execute(
+            """SELECT * FROM offers
+               WHERE status = 'queued'
+               ORDER BY scheduled_at ASC
+               LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return tuple(_row_to_offer(r) for r in rows)
+
     async def prune_expired(self, *, now: datetime, limit: int = 400) -> int:
         cursor = await self.db.execute(
             "DELETE FROM sessions WHERE expires_at < ?", (_dt(now),)
